@@ -294,8 +294,14 @@ extension MenuBarItemManager {
 
         for item in items where context.isValidForCaching(item) {
             if item.sourcePID == nil {
+                // On macOS 26, some items genuinely cannot be resolved via AX
+                // (processes that don't expose `AXExtrasMenuBar`). Previously we
+                // invalidated the cached window IDs whenever sourcePID was nil,
+                // which kicked off another full re-cache on the very next tick,
+                // thrashing the AX scans and racing with IceBar show operations.
+                // The SourcePID cache now handles TTL-based negative lookups, so
+                // we log and continue.
                 logger.warning("Missing sourcePID for \(item.logString, privacy: .public)")
-                context.shouldClearCachedItemWindowIDs = true
             }
 
             if let temp = temporarilyShownItemContexts.first(where: { $0.tag == item.tag }) {

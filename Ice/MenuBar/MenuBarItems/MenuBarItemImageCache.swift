@@ -119,8 +119,14 @@ final class MenuBarItemImageCache: ObservableObject {
         for item in items {
             let windowID = item.windowID
 
-            // Don't use `item.bounds`, it could be out of date.
-            guard let bounds = Bridging.getWindowBounds(for: windowID) else {
+            // Prefer the live window bounds, but fall back to the item's
+            // cached bounds when CGSGetScreenRectForWindow fails. This
+            // happens on macOS 26 for some items re-parented by Control
+            // Center; previously that dropped them from the capture and
+            // the layout preview rendered as "Unable to display menu bar
+            // items" even when Ice knew about the items.
+            let bounds = Bridging.getWindowBounds(for: windowID) ?? item.bounds
+            guard !bounds.isEmpty else {
                 result.excluded.append(item)
                 continue
             }
@@ -132,7 +138,10 @@ final class MenuBarItemImageCache: ObservableObject {
 
         guard
             let compositeImage = ScreenCapture.captureWindows(with: windowIDs, option: captureOption),
-            CGFloat(compositeImage.width) == boundsUnion.width * scale, // Safety check.
+            // Safety check. Allow a small tolerance, as macOS can report
+            // sub-pixel bounds that round to a single-pixel difference in
+            // the captured image.
+            abs(CGFloat(compositeImage.width) - boundsUnion.width * scale) <= 1,
             !compositeImage.isTransparent()
         else {
             result.excluded = items // Exclude all items.

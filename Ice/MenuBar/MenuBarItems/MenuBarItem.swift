@@ -358,11 +358,26 @@ private extension MenuBarItemTag.Namespace {
     /// and the source pid belongs to the application that created it.
     @available(macOS 26.0, *)
     init(uncheckedItemWindow itemWindow: WindowInfo, sourcePID: pid_t?) {
+        // On macOS 26, Control Center re-parents Ice's own control item windows,
+        // which breaks the source pid lookup (Ice runs as LSUIElement without
+        // exposing its status items through Accessibility). Recognize our own
+        // windows by the titles we control, so the resulting tags match the
+        // expected control item tags and the item cache can complete.
+        if let title = itemWindow.title, title.hasPrefix("Ice.ControlItem.") {
+            self = .ice
+            return
+        }
+
         // Most apps have a bundle ID, but we should be able to handle apps
         // that don't. We should also be able to handle daemons and helpers,
         // which are more likely not to have a bundle ID.
         if let sourcePID, let app = NSRunningApplication(processIdentifier: sourcePID) {
             self = .optional(app.bundleIdentifier ?? app.localizedName)
+        } else if let owner = itemWindow.owningApplication,
+                  owner.bundleIdentifier != "com.apple.controlcenter" {
+            // If the owner isn't Control Center, the pre-macOS 26 owner pid
+            // was the source pid, so fall back to the owner's identifiers.
+            self = .optional(owner.bundleIdentifier ?? itemWindow.ownerName ?? owner.localizedName)
         } else if let uuid = Self.uuidCache[itemWindow.windowID] {
             self = .uuid(uuid)
         } else {
