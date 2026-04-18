@@ -299,7 +299,12 @@ final class MenuBarManager: ObservableObject {
             return
         }
         logger.info("Hiding application menus")
-        appState.activate(withPolicy: .regular)
+        // Previously we flipped the activation policy to `.regular` to steal
+        // the menu bar from the frontmost app, but on macOS 26 that policy
+        // change is materialized as a dock icon for every bar expansion
+        // (see #906). `.accessory` apps can already be activated and take
+        // over the menu bar, so we just activate without changing policy.
+        appState.activate()
         isHidingApplicationMenus = true
     }
 
@@ -310,7 +315,8 @@ final class MenuBarManager: ObservableObject {
             return
         }
         logger.info("Showing application menus")
-        appState.deactivate(withPolicy: .accessory)
+        // Match the policy-free activation in `hideApplicationMenus()`.
+        appState.deactivate()
         isHidingApplicationMenus = false
     }
 

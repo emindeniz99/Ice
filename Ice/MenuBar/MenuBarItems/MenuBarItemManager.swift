@@ -363,9 +363,15 @@ extension MenuBarItemManager {
             await cacheActor.updateCachedItemWindowIDs(itemWindowIDs)
 
             guard let controlItems = ControlItemPair(items: &items) else {
-                // ???: Is clearing the cache the best thing to do here?
-                logger.warning("Missing control item for hidden section, clearing menu bar item cache")
-                itemCache = ItemCache(displayID: nil)
+                // Historically we replaced the cache with an empty one whenever
+                // this happened, but on macOS 26 the hidden control item can
+                // temporarily disappear from the window list during Control
+                // Center re-parenting. Clearing the cache to empty kicked off
+                // an immediate re-cache via observers, which on a bad day
+                // devolved into the FrontBoard scene-request storm described
+                // in issue #908. Keep the previous cache instead, log, and let
+                // the next scheduled tick try again.
+                logger.warning("Missing control item for hidden section, keeping previous cache")
                 return
             }
 
@@ -882,7 +888,12 @@ extension MenuBarItemManager {
     private func updateMoveOperationTimeout(_ timeout: Duration, for item: MenuBarItem) {
         let current = getMoveOperationTimeout(for: item)
         let average = (timeout + current) / 2
-        let clamped = average.clamped(min: .milliseconds(25), max: .milliseconds(150))
+        // Upper bound increased from 150ms to 500ms. On macOS 26, third-party
+        // helpers like Intego One occasionally need several hundred ms to
+        // update their menu bar window bounds after a mouse-down is posted;
+        // the old cap caused spurious "Frame check timed out" errors and left
+        // their icons stranded after a drag (see #918).
+        let clamped = average.clamped(min: .milliseconds(25), max: .milliseconds(500))
         moveOperationTimeouts[item.tag] = clamped
     }
 

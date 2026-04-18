@@ -19,6 +19,19 @@ final class IceBarPanel: NSPanel {
     /// The currently displayed section.
     private(set) var currentSection: MenuBarSection.Name?
 
+    /// Timestamp of the most recent call to ``show(section:on:)``. Used to
+    /// suppress spurious auto-hides that fire immediately after the panel
+    /// appears — `NSApplication.didChangeScreenParametersNotification` and
+    /// `NSWorkspace.activeSpaceDidChangeNotification` both fire on macOS 26
+    /// in response to the menu bar redrawing itself once the panel is
+    /// ordered front, which caused the panel to vanish "before the cursor
+    /// reaches it".
+    private var lastShowTimestamp: Date?
+
+    /// The minimum time between ``show(section:on:)`` and the earliest
+    /// auto-hide triggered by a space/screen parameter change.
+    private let autoHideGracePeriod: TimeInterval = 0.5
+
     /// Storage for internal observers.
     private var cancellables = Set<AnyCancellable>()
 
@@ -53,13 +66,24 @@ final class IceBarPanel: NSPanel {
     private func configureCancellables() {
         var c = Set<AnyCancellable>()
 
-        // Hide the panel when the active space or screen parameters change.
+        // Hide the panel when the active space or screen parameters change,
+        // but ignore events that arrive during the grace period right after
+        // the panel is shown. macOS 26's menu bar redraws itself when the
+        // panel is ordered front, which synthesizes these notifications and
+        // caused the panel to vanish before the user could interact.
         Publishers.Merge(
             NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.activeSpaceDidChangeNotification),
             NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
         )
         .sink { [weak self] _ in
-            self?.hide()
+            guard let self else {
+                return
+            }
+            if let shownAt = lastShowTimestamp,
+               Date().timeIntervalSince(shownAt) < autoHideGracePeriod {
+                return
+            }
+            self.hide()
         }
         .store(in: &c)
 
@@ -196,6 +220,7 @@ final class IceBarPanel: NSPanel {
         // the panel to prevent the color from flashing.
         colorManager.updateAllProperties(with: frame, screen: screen)
 
+        lastShowTimestamp = Date()
         orderFrontRegardless()
     }
 
@@ -214,6 +239,7 @@ final class IceBarPanel: NSPanel {
         super.close()
         contentView = nil
         currentSection = nil
+        lastShowTimestamp = nil
         appState?.navigationState.isIceBarPresented = false
     }
 }
