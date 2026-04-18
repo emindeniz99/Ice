@@ -29,7 +29,11 @@ enum CodeSignInfo {
         }
 
         var infoRef: CFDictionary?
-        let flags = SecCSFlags(rawValue: UInt32(kSecCSSigningInformation))
+        // kSecCSSigningInformation is defined as `1 << 1` by the Security
+        // framework. We use the literal value here to avoid depending on
+        // how Swift imports the constant (`Int`, `UInt32`, or `SecCSFlags`),
+        // which has varied between toolchains.
+        let flags = SecCSFlags(rawValue: 1 << 1)
         guard SecCodeCopySigningInformation(staticCode, flags, &infoRef) == errSecSuccess,
               let info = infoRef as? [String: Any]
         else {
