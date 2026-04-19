@@ -109,6 +109,16 @@ final class IceBarPanel: NSPanel {
                         return
                     }
 
+                    // Ignore transient nil values that can arrive on macOS 26
+                    // when Control Center re-parents the control item window.
+                    // Without this guard, the panel would vanish the instant
+                    // the reparenting completed.
+                    if let shownAt = lastShowTimestamp,
+                       Date().timeIntervalSince(shownAt) < autoHideGracePeriod,
+                       frame == nil || screen == nil {
+                        return
+                    }
+
                     guard let frame, let screen else {
                         hide()
                         return
