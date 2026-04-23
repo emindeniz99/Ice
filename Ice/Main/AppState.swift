@@ -211,6 +211,28 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Relaunches the app from its current bundle location.
+    ///
+    /// On macOS 26, Screen Recording permissions sometimes require a full
+    /// restart of Ice before the capture APIs start returning useful
+    /// results even after the user has granted the permission in System
+    /// Settings. This launches a fresh copy of the app and then
+    /// terminates the current process.
+    func relaunch() {
+        let bundleURL = Bundle.main.bundleURL
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { _, error in
+            if let error {
+                Logger.default.error("Failed to relaunch app - \(error.localizedDescription)")
+                return
+            }
+            DispatchQueue.main.async {
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
     /// Returns a publisher for the window with the given identifier.
     func publisherForWindow(_ id: IceWindowIdentifier) -> some Publisher<NSWindow?, Never> {
         NSApp.publisher(for: \.windows).mergeMap { window in

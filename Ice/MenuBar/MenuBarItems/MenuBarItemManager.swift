@@ -357,7 +357,21 @@ extension MenuBarItemManager {
             }
 
             let displayID = Bridging.getActiveMenuBarDisplayID()
-            var items = await MenuBarItem.getMenuBarItems(option: .activeSpace)
+
+            // Pre-fetch the window list so we can build a controlItemMap
+            // before turning the raw windows into MenuBarItems. This is the
+            // macOS 26 workaround for Control Center re-parenting Ice's own
+            // status items: after a reparent, the windows carry Control
+            // Center as their owner and — on some Tahoe point releases —
+            // have `title == nil`. Match them by frame against the live
+            // NSStatusItem windows so we can put the correct
+            // `Ice.ControlItem.*` identifier back on them.
+            let menuBarItemWindows = MenuBarItem.getMenuBarItemWindows(option: .activeSpace)
+            let controlItemMap = buildControlItemMap(for: menuBarItemWindows)
+            var items = await MenuBarItem.getMenuBarItems(
+                windows: menuBarItemWindows,
+                controlItemMap: controlItemMap
+            )
 
             let itemWindowIDs = currentItemWindowIDs ?? items.reversed().map { $0.windowID }
             await cacheActor.updateCachedItemWindowIDs(itemWindowIDs)
@@ -378,6 +392,46 @@ extension MenuBarItemManager {
             await enforceControlItemOrder(controlItems: controlItems)
             await uncheckedCacheItems(items: items, controlItems: controlItems, displayID: displayID)
         }
+    }
+
+    /// Builds a map from menu-bar-item windowIDs to Ice's control-item
+    /// identifier, matching by frame. On macOS 26 this is how we recover
+    /// Ice's own control items after Control Center has re-parented them
+    /// and stripped their titles.
+    private func buildControlItemMap(for windows: [WindowInfo]) -> [CGWindowID: ControlItem.Identifier] {
+        guard
+            #available(macOS 26.0, *),
+            let appState
+        else {
+            return [:]
+        }
+        // Snapshot each ControlItem's current frame, converting from
+        // Cocoa (bottom-left) to CG screen coordinates (top-left).
+        var controlBounds = [(CGRect, ControlItem.Identifier)]()
+        for section in appState.menuBarManager.sections {
+            let controlItem = section.controlItem
+            guard
+                let frame = controlItem.window?.frame,
+                let screen = controlItem.screen
+            else {
+                continue
+            }
+            let cgRect = CGRect(
+                x: frame.origin.x,
+                y: screen.frame.height - frame.origin.y - frame.height,
+                width: frame.width,
+                height: frame.height
+            )
+            controlBounds.append((cgRect, controlItem.identifier))
+        }
+        var map = [CGWindowID: ControlItem.Identifier]()
+        for window in windows {
+            for (bounds, identifier) in controlBounds where window.bounds == bounds {
+                map[window.windowID] = identifier
+                break
+            }
+        }
+        return map
     }
 
     /// Caches the current menu bar items, if the items have changed

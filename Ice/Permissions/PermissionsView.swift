@@ -151,10 +151,19 @@ struct PermissionsView: View {
 
                 Button {
                     permission.performRequest()
-                    Task {
-                        await permission.waitForPermission()
+                    if permission.mayRequireRelaunch {
+                        // Don't block on the permission check — on macOS 26
+                        // the capture APIs may not start returning useful
+                        // results until Ice is relaunched, so we present a
+                        // "Relaunch Ice" button below and let the user do it.
                         appState.activate(withPolicy: .regular)
                         appState.openWindow(.permissions)
+                    } else {
+                        Task {
+                            await permission.waitForPermission()
+                            appState.activate(withPolicy: .regular)
+                            appState.openWindow(.permissions)
+                        }
                     }
                 } label: {
                     if permission.hasPermission {
@@ -165,6 +174,19 @@ struct PermissionsView: View {
                     }
                 }
                 .allowsHitTesting(!permission.hasPermission)
+
+                if permission.mayRequireRelaunch && !permission.hasPermission {
+                    VStack(spacing: 6) {
+                        Text("After granting this permission in System Settings, relaunch Ice to enable capture on macOS 26.")
+                            .font(.footnote)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.secondary)
+
+                        Button("Relaunch Ice") {
+                            appState.relaunch()
+                        }
+                    }
+                }
 
                 if !permission.isRequired {
                     CalloutBox("Ice can work in a limited mode without this permission.") {

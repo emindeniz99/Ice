@@ -30,6 +30,11 @@ enum AXHelpers {
     /// translucent "Liquid Glass" menu bar. Probing several inset points along the
     /// leftmost region of the menu bar (where application menus live, and away
     /// from the notch and trailing accessories) is significantly more reliable.
+    ///
+    /// The probe can land on either the menu bar itself or on one of its children
+    /// (e.g. an individual menu bar item such as "File" or "Edit"), so when a hit
+    /// isn't the menu bar we walk up the parent chain for a few hops before
+    /// giving up on that probe point.
     static func menuBarElement(nearDisplayOrigin origin: CGPoint) -> UIElement? {
         // Probe points are in screen coordinates with the origin at the top-left
         // of the display. Offsets are applied to avoid the notch area and
@@ -45,14 +50,27 @@ enum AXHelpers {
         ]
         for offset in probeOffsets {
             let point = CGPoint(x: origin.x + offset.x, y: origin.y + offset.y)
-            guard let element = element(at: point) else {
+            guard var element = element(at: point) else {
                 continue
             }
-            if role(for: element) == .menuBar {
-                return element
+            // Walk up to a handful of parents looking for the menu bar.
+            // The hit usually lands on either the menu bar itself or one of
+            // its direct menu-bar-item children, so 4 hops is plenty.
+            for _ in 0..<4 {
+                if role(for: element) == .menuBar {
+                    return element
+                }
+                guard let next = parent(of: element) else {
+                    break
+                }
+                element = next
             }
         }
         return nil
+    }
+
+    static func parent(of element: UIElement) -> UIElement? {
+        queue.sync { try? element.attribute(.parent) }
     }
 
     static func application(for runningApp: NSRunningApplication) -> Application? {
