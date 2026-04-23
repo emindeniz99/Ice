@@ -434,6 +434,19 @@ extension MenuBarItemManager {
         return map
     }
 
+    /// Returns the current menu bar items, building the frame-based
+    /// control-item map first so Ice's own items get the correct
+    /// `.ice` namespace even when Control Center has re-parented them
+    /// on macOS 26.
+    func menuBarItems(
+        on display: CGDirectDisplayID? = nil,
+        option: MenuBarItem.ListOption
+    ) async -> [MenuBarItem] {
+        let windows = MenuBarItem.getMenuBarItemWindows(on: display, option: option)
+        let map = buildControlItemMap(for: windows)
+        return await MenuBarItem.getMenuBarItems(windows: windows, controlItemMap: map)
+    }
+
     /// Caches the current menu bar items, if the items have changed
     /// since the previous cache.
     ///
@@ -1446,7 +1459,7 @@ extension MenuBarItemManager {
             return
         }
 
-        var items = await MenuBarItem.getMenuBarItems(option: .activeSpace)
+        var items = await menuBarItems(option: .activeSpace)
 
         guard let destination = getReturnDestination(for: item, in: items) else {
             logger.error("No return destination for \(item.logString, privacy: .public)")
@@ -1548,7 +1561,7 @@ extension MenuBarItemManager {
         var currentContexts = temporarilyShownItemContexts
         temporarilyShownItemContexts.removeAll()
 
-        let items = await MenuBarItem.getMenuBarItems(option: .activeSpace)
+        let items = await menuBarItems(option: .activeSpace)
         var failedContexts = [TemporarilyShownItemContext]()
 
         appState.hidEventManager.stopAll()

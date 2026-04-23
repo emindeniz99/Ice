@@ -180,9 +180,16 @@ final class MenuBarManager: ObservableObject {
                         return
                     }
 
-                    Task {
-                        // Get all items.
-                        var items = await MenuBarItem.getMenuBarItems(on: screen.displayID, option: .activeSpace)
+                    Task { [appState] in
+                        // Get items for this display. Route through the item
+                        // manager so the frame-based control-item map is
+                        // built first (needed to tag Ice's own items
+                        // correctly on macOS 26, where Control Center
+                        // re-parents their windows).
+                        var items = await appState.itemManager.menuBarItems(
+                            on: screen.displayID,
+                            option: .activeSpace
+                        )
 
                         // Filter the items down according to the currently enabled/shown sections.
                         if
