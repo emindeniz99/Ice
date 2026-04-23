@@ -82,9 +82,7 @@ class Permission: ObservableObject, Identifiable {
     /// Performs the request and opens the System Settings app to the appropriate pane.
     func performRequest() {
         request()
-        if let settingsURL {
-            NSWorkspace.shared.open(settingsURL)
-        }
+        openSettingsPane()
     }
 
     /// Asynchronously waits for the app to be granted this permission.
@@ -157,5 +155,41 @@ final class ScreenRecordingPermission: Permission {
                 ScreenCapture.requestPermissions()
             }
         )
+    }
+}
+
+// MARK: - Permission: opening System Settings
+
+extension Permission {
+    /// Opens the System Settings pane associated with this permission.
+    ///
+    /// On macOS 26 the URL scheme for the Screen Recording pane has been
+    /// unreliable — some builds only respond to the legacy
+    /// `x-apple.systempreferences:com.apple.preference.security` URL and
+    /// ignore anything with a `?Privacy_ScreenCapture` anchor, while others
+    /// only open the app when invoked through `/usr/bin/open`. Try the
+    /// configured URL first, then a bare Security pane URL, and finally
+    /// shell out to `open` so the user always lands *somewhere* useful.
+    func openSettingsPane() {
+        let fallbackURLs: [URL] = [
+            settingsURL,
+            URL(string: "x-apple.systempreferences:com.apple.preference.security"),
+        ].compactMap { $0 }
+
+        for url in fallbackURLs {
+            if NSWorkspace.shared.open(url) {
+                return
+            }
+        }
+
+        // Last-resort: use `/usr/bin/open` to launch System Settings. The
+        // NSWorkspace path can silently fail on macOS 26 if the URL handler
+        // is momentarily unregistered after the Settings app updates.
+        if let url = fallbackURLs.first {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = [url.absoluteString]
+            try? process.run()
+        }
     }
 }

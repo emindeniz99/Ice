@@ -57,7 +57,11 @@ final class AppState: ObservableObject {
 
     /// Async setup actions, run once on first access.
     private lazy var setupTask = Task {
-        permissions.stopAllChecks()
+        // Historically we stopped permission checks after setup to save a
+        // timer. On macOS 26 the user may revoke or grant Screen Recording
+        // while Ice is running (System Settings prompts a relaunch but
+        // doesn't force it), and if the timers are stopped we'll never
+        // notice that the permission state has changed. Keep them running.
 
         settings.performSetup(with: self)
         menuBarManager.performSetup(with: self)
