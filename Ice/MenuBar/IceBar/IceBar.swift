@@ -75,6 +75,7 @@ final class IceBarPanel: NSPanel {
             NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.activeSpaceDidChangeNotification),
             NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
         )
+        .receive(on: DispatchQueue.main)
         .sink { [weak self] _ in
             guard let self else {
                 return
