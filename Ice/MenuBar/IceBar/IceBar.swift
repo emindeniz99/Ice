@@ -80,8 +80,10 @@ final class IceBarPanel: NSPanel {
             guard let self else {
                 return
             }
-            if let shownAt = lastShowTimestamp,
-               Date().timeIntervalSince(shownAt) < autoHideGracePeriod {
+            if
+                let shownAt = lastShowTimestamp,
+                Date().timeIntervalSince(shownAt) < autoHideGracePeriod
+            {
                 return
             }
             self.hide()
@@ -114,9 +116,11 @@ final class IceBarPanel: NSPanel {
                     // when Control Center re-parents the control item window.
                     // Without this guard, the panel would vanish the instant
                     // the reparenting completed.
-                    if let shownAt = lastShowTimestamp,
-                       Date().timeIntervalSince(shownAt) < autoHideGracePeriod,
-                       frame == nil || screen == nil {
+                    if
+                        let shownAt = lastShowTimestamp,
+                        Date().timeIntervalSince(shownAt) < autoHideGracePeriod,
+                        frame == nil || screen == nil
+                    {
                         return
                     }
 

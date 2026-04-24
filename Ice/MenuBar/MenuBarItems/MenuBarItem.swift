@@ -417,8 +417,10 @@ private extension MenuBarItemTag.Namespace {
         // which are more likely not to have a bundle ID.
         if let sourcePID, let app = NSRunningApplication(processIdentifier: sourcePID) {
             self = .optional(app.bundleIdentifier ?? app.localizedName)
-        } else if let owner = itemWindow.owningApplication,
-                  owner.bundleIdentifier != "com.apple.controlcenter" {
+        } else if
+            let owner = itemWindow.owningApplication,
+            owner.bundleIdentifier != "com.apple.controlcenter"
+        {
             // If the owner isn't Control Center, the pre-macOS 26 owner pid
             // was the source pid, so fall back to the owner's identifiers.
             self = .optional(owner.bundleIdentifier ?? itemWindow.ownerName ?? owner.localizedName)
