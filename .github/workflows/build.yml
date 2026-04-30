@@ -1,0 +1,146 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "**/*.swift"
+      - "**/*.xcconfig"
+      - "**/*.entitlements"
+      - "**/*.xcodeproj/**"
+      - "**/Resources/**"
+      - "Package.resolved"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "**/*.swift"
+      - "**/*.xcconfig"
+      - "**/*.entitlements"
+      - "**/*.xcodeproj/**"
+      - "**/Resources/**"
+      - "Package.resolved"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Linux-side smoke test. Cheap, runs on free runners, catches raw
+  # syntax errors before we burn macOS-runner minutes on them.
+  swift-parse:
+    name: Swift parse (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Swift 6.0.3
+        run: |
+          set -e
+          mkdir -p $HOME/swift
+          cd $HOME/swift
+          curl -sLO https://download.swift.org/swift-6.0.3-release/ubuntu2404/swift-6.0.3-RELEASE/swift-6.0.3-RELEASE-ubuntu24.04.tar.gz
+          tar xzf swift-6.0.3-RELEASE-ubuntu24.04.tar.gz
+          rm swift-6.0.3-RELEASE-ubuntu24.04.tar.gz
+          echo "$HOME/swift/swift-6.0.3-RELEASE-ubuntu24.04/usr/bin" >> $GITHUB_PATH
+
+      - name: Parse-check every Swift file
+        run: |
+          set -e
+          fails=0
+          while IFS= read -r f; do
+            output=$(swiftc -parse -enable-bare-slash-regex "$f" 2>&1) || {
+              fails=$((fails + 1))
+              echo "::error file=$f::$output"
+            }
+          done < <(find Ice MenuBarItemService Shared -name '*.swift')
+          if [ "$fails" -ne 0 ]; then
+            echo "$fails files failed parse-check"
+            exit 1
+          fi
+          echo "All Swift files parse cleanly."
+
+  build:
+    name: Build (${{ matrix.runner }})
+    needs: swift-parse
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-26 has the macOS 26 SDK so `@available(macOS 26.0, *)`
+        # branches actually compile. macos-15 is a sanity check — if a
+        # macOS 26-only API leaks into an unguarded code path, this is
+        # what catches it.
+        runner: [macos-26, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          ls /Applications | grep -i Xcode || true
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+
+      - name: Resolve Swift package dependencies
+        run: |
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project Ice.xcodeproj \
+            -scheme Ice
+
+      - name: Build Ice (Debug, no signing)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Ice.xcodeproj \
+            -scheme Ice \
+            -configuration Debug \
+            -destination 'generic/platform=macOS' \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            ONLY_ACTIVE_ARCH=NO \
+            2>&1 | tee xcodebuild-ice.log
+
+      - name: Build MenuBarItemService (Debug, no signing)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Ice.xcodeproj \
+            -scheme MenuBarItemService \
+            -configuration Debug \
+            -destination 'generic/platform=macOS' \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            ONLY_ACTIVE_ARCH=NO \
+            2>&1 | tee xcodebuild-mbis.log
+
+      - name: Surface compiler errors
+        if: always()
+        run: |
+          # Pull error-only lines out of the full xcodebuild output so the
+          # GitHub UI surfaces them as failures even when the log is huge.
+          grep -E ': (error|warning): ' xcodebuild-ice.log xcodebuild-mbis.log || true
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ matrix.runner }}
+          path: |
+            xcodebuild-ice.log
+            xcodebuild-mbis.log
+          if-no-files-found: ignore
+          retention-days: 7

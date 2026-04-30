@@ -518,13 +518,37 @@ extension HIDEventManager {
         return frameOfNotch.contains(mouseLocation)
     }
 
+    /// A Boolean value that indicates whether the mouse pointer is occluded
+    /// by a third-party window whose level is above the menu bar.
+    ///
+    /// Some apps draw HUD-style overlays above the menu bar (notification
+    /// pill replacements, screen-recording indicators, etc.). When the user
+    /// clicks the overlay's UI, `isMouseInsideEmptyMenuBarSpace` would
+    /// previously return `true` and Ice would toggle a section even though
+    /// the click was meant for the overlay.
+    func isMouseInsideOverlayAboveMenuBar(appState: AppState) -> Bool {
+        guard let mouseLocation = MouseHelpers.locationCoreGraphics else {
+            return false
+        }
+        let icePID = ProcessInfo.processInfo.processIdentifier
+        let menuBarLevel = Int(CGWindowLevelForKey(.mainMenuWindow))
+        let cursorLevel = Int(CGWindowLevelForKey(.cursorWindow))
+        return WindowInfo.createWindows(option: .onScreen).contains { window in
+            window.ownerPID != icePID &&
+            window.layer > menuBarLevel &&
+            window.layer < cursorLevel &&
+            window.bounds.contains(mouseLocation)
+        }
+    }
+
     /// A Boolean value that indicates whether the mouse pointer is within
     /// the bounds of an empty space in the menu bar.
     func isMouseInsideEmptyMenuBarSpace(appState: AppState, screen: NSScreen) -> Bool {
         isMouseInsideMenuBar(appState: appState, screen: screen) &&
         !isMouseInsideApplicationMenu(appState: appState, screen: screen) &&
         !isMouseInsideMenuBarItem(appState: appState, screen: screen) &&
-        !isMouseInsideNotch(appState: appState, screen: screen)
+        !isMouseInsideNotch(appState: appState, screen: screen) &&
+        !isMouseInsideOverlayAboveMenuBar(appState: appState)
     }
 
     /// A Boolean value that indicates whether the mouse pointer is within
