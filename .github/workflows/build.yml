@@ -62,20 +62,31 @@ jobs:
           echo "All Swift files parse cleanly."
 
   build:
-    name: Build (${{ matrix.runner }})
+    name: Build (${{ matrix.runner }} / ${{ matrix.xcode-tag }})
     needs: swift-parse
     strategy:
       fail-fast: false
       matrix:
-        # macos-26 has the macOS 26 SDK so `@available(macOS 26.0, *)`
-        # branches actually compile. macos-15 is a sanity check — if a
-        # macOS 26-only API leaks into an unguarded code path, this is
-        # what catches it.
-        runner: [macos-26, macos-15]
+        # Both runners have Xcode 26 installed; we pick it explicitly so the
+        # macOS 26 SDK is in use, since the Ice codebase calls
+        # XPCListener(service:requirement:incomingSessionHandler:) which only
+        # exists in that SDK. macos-15 with the default Xcode 16 cannot build
+        # this codebase even with @available guards because the
+        # SDK headers don't define the new API at all.
+        include:
+          - runner: macos-26
+            xcode-tag: Xcode-26
+            xcode-app: /Applications/Xcode_26.app/Contents/Developer
+          - runner: macos-15
+            xcode-tag: Xcode-26
+            xcode-app: /Applications/Xcode_26.app/Contents/Developer
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: sudo xcode-select -s "${{ matrix.xcode-app }}"
 
       - name: Show toolchain
         run: |
