@@ -62,31 +62,35 @@ jobs:
           echo "All Swift files parse cleanly."
 
   build:
-    name: Build (${{ matrix.runner }} / ${{ matrix.xcode-tag }})
+    name: Build (${{ matrix.runner }})
     needs: swift-parse
     strategy:
       fail-fast: false
       matrix:
-        # Both runners have Xcode 26 installed; we pick it explicitly so the
-        # macOS 26 SDK is in use, since the Ice codebase calls
-        # XPCListener(service:requirement:incomingSessionHandler:) which only
-        # exists in that SDK. macos-15 with the default Xcode 16 cannot build
-        # this codebase even with @available guards because the
-        # SDK headers don't define the new API at all.
-        include:
-          - runner: macos-26
-            xcode-tag: Xcode-26
-            xcode-app: /Applications/Xcode_26.app/Contents/Developer
-          - runner: macos-15
-            xcode-tag: Xcode-26
-            xcode-app: /Applications/Xcode_26.app/Contents/Developer
+        # Both runners have Xcode 26 installed under various point-version
+        # suffixes (Xcode_26.0.app, Xcode_26.1.app, etc.) — we pick the
+        # highest one available at runtime. macos-15 with the default
+        # Xcode 16 cannot build this codebase: it calls
+        # XPCListener(service:requirement:incomingSessionHandler:), which
+        # only exists in the macOS 26 SDK headers, so even @available guards
+        # don't help.
+        runner: [macos-26, macos-15]
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Select Xcode 26
-        run: sudo xcode-select -s "${{ matrix.xcode-app }}"
+      - name: Select highest installed Xcode 26
+        run: |
+          set -e
+          XCODE_APP=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode 26.x found on this runner"
+            ls /Applications | grep -i Xcode || true
+            exit 1
+          fi
+          echo "Selected: $XCODE_APP"
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
 
       - name: Show toolchain
         run: |
