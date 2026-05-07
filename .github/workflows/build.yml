@@ -26,14 +26,6 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
-# Opt every job into the Node.js 24 runtime for JavaScript actions.
-# actions/checkout@v4 and actions/upload-artifact@v4 still ship a Node 20
-# entrypoint; without this they emit a deprecation warning on every run
-# and will hard-fail when Node 20 is removed from the runner image
-# (announced for 2026-09-16).
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   # Linux-side smoke test. Cheap, runs on free runners, catches raw
   # syntax errors before we burn macOS-runner minutes on them.
@@ -41,7 +33,7 @@ jobs:
     name: Swift parse (Linux)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Swift 6.0.3
         run: |
@@ -86,7 +78,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Select highest installed Xcode 26
         run: |
@@ -159,7 +151,7 @@ jobs:
 
       - name: Upload build logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-logs-${{ matrix.runner }}
           path: |

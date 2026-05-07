@@ -12,18 +12,12 @@ on:
       - ".swiftlint.yml"
       - "**/*.swift"
 
-# action-swiftlint and actions/checkout still ship a Node 20 entrypoint;
-# opt the workflow into the Node 24 runtime so it stops warning today
-# and survives the 2026-09-16 Node 20 removal.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   swiftlint:
     if: '!github.event.pull_request.merged'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run SwiftLint
         uses: norio-nomura/action-swiftlint@3.2.1
         with:
