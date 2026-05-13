@@ -1,0 +1,45 @@
+# Dependabot keeps third-party dependencies up to date so the project
+# doesn't end up shipping a known-vulnerable transitive package.
+# See https://docs.github.com/en/code-security/dependabot.
+
+version: 2
+updates:
+  # GitHub Actions used by .github/workflows/*. Updates get grouped into
+  # one PR per week so the noise stays bounded.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      actions:
+        patterns:
+          - "*"
+    # We pin every action to a 40-char commit SHA with the human-readable
+    # version as a trailing comment. Dependabot can follow that pattern.
+    commit-message:
+      prefix: "ci"
+      include: scope
+
+  # Swift Package Manager dependencies declared in the .xcodeproj.
+  # Same weekly cadence so security fixes don't sit unmerged.
+  - package-ecosystem: swift
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - swift
+    commit-message:
+      prefix: "deps"
+      include: scope
