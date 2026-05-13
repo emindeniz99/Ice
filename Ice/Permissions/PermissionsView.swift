@@ -24,7 +24,10 @@ struct PermissionsView: View {
         case .hasAll:
             AnyShapeStyle(.primary)
         case .hasRequired:
-            AnyShapeStyle(.yellow)
+            // Plain `.yellow` failed contrast checks against the light button
+            // background. Use a darker amber that keeps the warning/limited
+            // semantic but stays readable. (Backport of PR #942.)
+            AnyShapeStyle(Color(red: 0.75, green: 0.45, blue: 0))
         }
     }
 
