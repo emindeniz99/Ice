@@ -235,7 +235,38 @@ extension MenuBarItemManager {
         var shouldClearCachedItemWindowIDs = false
 
         private(set) lazy var hiddenControlItemBounds = bestBounds(for: controlItems.hidden)
-        private(set) lazy var alwaysHiddenControlItemBounds = controlItems.alwaysHidden.map(bestBounds)
+
+        /// Cached bounds for the always-hidden control item, before the
+        /// sanity check below. Only used by ``alwaysHiddenControlItemBounds``.
+        private(set) lazy var rawAlwaysHiddenControlItemBounds = controlItems.alwaysHidden.map(bestBounds)
+
+        /// Returns the bounds of the always-hidden control item, or `nil`
+        /// if the section is disabled OR the bounds collide with / are to
+        /// the right of the hidden control item.
+        ///
+        /// On macOS 26.5, Control Center's status-item reparenting can
+        /// (transiently) report both control items at the same X position,
+        /// or even with the always-hidden control item to the *right* of
+        /// the hidden one. With the predicates below, that makes the
+        /// `.hidden` branch unsatisfiable and every previously-hidden item
+        /// falls through to `.alwaysHidden` — exactly the symptom in
+        /// jordanbaird/Ice#946. Returning `nil` here transparently routes
+        /// `findSection` through its no-always-hidden code path, which
+        /// classifies everything to the left of `hiddenControlItemBounds`
+        /// as `.hidden`. The next cache tick re-derives bounds and, when
+        /// the control items have settled into their correct positions,
+        /// the always-hidden section starts working again.
+        var alwaysHiddenControlItemBounds: CGRect? {
+            guard let ah = rawAlwaysHiddenControlItemBounds else {
+                return nil
+            }
+            // Always-hidden must be strictly to the LEFT of hidden. If the
+            // two collide or invert, treat the section as missing.
+            guard ah.maxX <= hiddenControlItemBounds.minX else {
+                return nil
+            }
+            return ah
+        }
 
         init(controlItems: ControlItemPair, displayID: CGDirectDisplayID?) {
             self.controlItems = controlItems
@@ -1642,10 +1673,20 @@ extension MenuBarItemManager {
     private func enforceControlItemOrder(controlItems: ControlItemPair) async {
         let hidden = controlItems.hidden
 
-        guard
-            let alwaysHidden = controlItems.alwaysHidden,
-            hidden.bounds.maxX <= alwaysHidden.bounds.minX
-        else {
+        // Use the live `getWindowBounds` rather than `item.bounds` so the
+        // comparison reflects what `findSection` will see. During Control
+        // Center reparenting on macOS 26 the CGWindowList snapshot can
+        // disagree with `CGSGetScreenRectForWindow` for a few hundred
+        // milliseconds; without the live read, this routine sometimes
+        // "corrected" an order that was already right.
+        let hiddenBounds = Bridging.getWindowBounds(for: hidden.windowID) ?? hidden.bounds
+
+        guard let alwaysHidden = controlItems.alwaysHidden else {
+            return
+        }
+        let alwaysHiddenBounds = Bridging.getWindowBounds(for: alwaysHidden.windowID) ?? alwaysHidden.bounds
+
+        guard hiddenBounds.maxX <= alwaysHiddenBounds.minX else {
             return
         }
 

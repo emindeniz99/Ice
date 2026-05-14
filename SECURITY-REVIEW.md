@@ -175,7 +175,7 @@ Grouping plus the PR limit keeps the noise bounded; the maintainer sees at
 most one Actions PR and a small number of Swift PRs per week, each of which
 is reviewable before merge.
 
-## Phase 5 — Static analysis (zizmor)
+## Phase 5 — Static analysis
 
 [zizmor](https://github.com/woodruffw/zizmor) is a static analyzer for
 GitHub Actions workflows. It catches expression injection, dangerous
@@ -183,26 +183,60 @@ triggers (`pull_request_target` patterns, `workflow_run` chains),
 over-broad permissions, unpinned actions, persisted credentials, and other
 supply-chain-relevant misconfigurations.
 
-The new `zizmor.yml` workflow runs on every push and PR that touches
-`.github/workflows/**` (plus on `workflow_dispatch`), executes
+Three static-analysis jobs were added under `.github/workflows/`. All three
+upload SARIF to GitHub Code Scanning so findings surface in the Security tab,
+and all three run with `permissions: {}` at the workflow level and the
+narrowest possible per-job grant.
+
+### `zizmor.yml`
+
+Runs on every push and PR that touches `.github/workflows/**` (plus on
+`workflow_dispatch`), executes
 `uvx --from zizmor zizmor --persona=auditor --format sarif` against the
-workflows directory, and uploads the SARIF to GitHub Code Scanning. During
-the initial rollout it is marked `continue-on-error: true` so the existing
-backlog of findings surfaces in the Security tab without blocking unrelated
-work; that flag should be removed once the backlog has been triaged
-(tracked in *Remaining risk* below).
+workflows directory, and uploads the SARIF. During the initial rollout it is
+marked `continue-on-error: true` so the existing backlog of findings surfaces
+without blocking unrelated work; that flag should be removed once the backlog
+has been triaged (tracked in *Remaining risk* below).
+
+| `uses:` | Tag | SHA |
+| --- | --- | --- |
+| `actions/checkout` | `v6.0.2` | `de0fac2e4500dabe0009e67214ff5f5447ce83dd` |
+| `astral-sh/setup-uv` | `v8.1.0` | `08807647e7069bb48b6ef5acd8ec9567f424441b` |
+| `github/codeql-action/upload-sarif` | `codeql-bundle-v2.25.4` | `bc0b696b4103f5fe60f15749af68a046868d511a` |
+
+### `gitleaks.yml`
+
+Scans the **full git history** (`fetch-depth: 0`, `persist-credentials: false`)
+for committed credentials. Runs on push, PR, weekly Monday 06:00 UTC schedule,
+and `workflow_dispatch`. Both the gitleaks step and SARIF upload are
+`continue-on-error: true` during rollout. Phase 1's manual scan showed zero
+committed secrets in current state and history; this is forward-looking
+coverage so a future regression is caught at PR time, not after the leak.
+
+| `uses:` | Tag | SHA |
+| --- | --- | --- |
+| `actions/checkout` | `v6.0.2` | `de0fac2e4500dabe0009e67214ff5f5447ce83dd` |
+| `gitleaks/gitleaks-action` | `v2.3.9` | `ff98106e4c7b2bc287b24eaf42907196329070c7` |
+| `github/codeql-action/upload-sarif` | `codeql-bundle-v2.25.4` | `bc0b696b4103f5fe60f15749af68a046868d511a` |
+
+### `osv-scanner.yml`
+
+Calls Google's reusable `osv-scanner-reusable.yml` workflow against the
+project's `Package.resolved`, the workflow files, and itself. Triggered on
+push, PR, weekly Monday schedule, and `workflow_dispatch`. The reusable
+workflow uploads SARIF internally, so the caller declares only the
+permissions the reusable workflow requires (`contents: read`,
+`security-events: write`, `actions: read`). Swift Package Manager coverage in
+the OSV database is currently lighter than npm/PyPI/crates.io, but the
+report is still actionable for the six Swift packages Ice depends on, and is
+complementary to Dependabot (which raises updates, while OSV flags known
+CVEs in the version currently pinned).
+
+| `uses:` | Tag | SHA |
+| --- | --- | --- |
+| `google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml` | `v2.3.8` | `9a498708959aeaef5ef730655706c5a1df1edbc2` |
 
 ## What was deliberately skipped, and why
-
-- **gitleaks** — the IoC scan in Phase 1 found zero committed secrets and
-  the project has no historical pattern of credentials living in the tree.
-  Phase 3's push-protection / secret scanning provides comparable forward
-  coverage with less workflow noise. Easy to add later if posture changes.
-- **OSV-Scanner** — Swift Package Manager support in OSV-Scanner is still
-  limited (the OSV database has thin Swift coverage compared to npm, PyPI,
-  or crates.io). The `swift` Dependabot ecosystem already raises PRs for
-  upstream package updates, which is the actionable surface; an OSV report
-  on the same packages would mostly be redundant today.
 - **pinact** — this pass *manually* pinned every third-party action to a
   40-char SHA and Dependabot will keep those pins fresh. pinact is more
   useful as an ongoing-maintenance tool for repos that have not yet been
@@ -210,13 +244,20 @@ work; that flag should be removed once the backlog has been triaged
 
 ## Remaining risk
 
-- **Issue #946 (macOS 26.5 hidden→always-hidden regression).** This is a
-  functional regression, not a security issue, but it lives on the same
-  branch and is worth tracking as a follow-up so the security and
-  functional hardening land together.
-- **`continue-on-error: true` on the zizmor job.** Initial findings will
-  *not* fail builds. Once the existing backlog has been triaged, flip the
-  flag off so future regressions block merge.
+- **Issue #946 (macOS 26.5 hidden→always-hidden regression).** This branch
+  applies a defensive guard (`alwaysHiddenControlItemBounds` returns `nil`
+  when the bounds collide with or are right of the hidden control item) and
+  routes `enforceControlItemOrder` through `Bridging.getWindowBounds` for
+  live coordinates. Both changes degrade gracefully if the hypothesis is
+  wrong — worst case is one extra `.warning` log per cache tick. Still
+  worth re-verifying on macOS 26.5 hardware before declaring it fixed.
+- **`continue-on-error: true` on the zizmor and gitleaks jobs.** Initial
+  findings will *not* fail builds. Once the existing backlogs have been
+  triaged, flip the flag off so future regressions block merge.
+- **OSV-Scanner `fail-on-vuln` default.** The reusable workflow's default
+  is `true`. If the initial scan surfaces noise on Swift packages, the
+  follow-up is to set `fail-on-vuln: false` under `with:` in
+  `osv-scanner.yml` until the backlog is addressed.
 - **Phase 3 items require repo-admin access.** Branch protection, tag
   protection rulesets, secret-scanning push protection, code scanning, and
   signed-commit requirements cannot be enforced from code. Until the
@@ -255,3 +296,5 @@ The commits delivered by this pass, in the order they landed:
 | `6abfa1a` | Add Dependabot config for GitHub Actions + Swift Package Manager — weekly cadence, grouped, 5-PR limit per ecosystem. |
 | `23ec544` | CI: add zizmor static analysis for workflows — SARIF upload to GitHub Code Scanning, `continue-on-error` during rollout. |
 | `dda0bd4` | CodeSignInfo: document the file's purpose — Swift comment touch to re-trigger CI after the workflow changes. |
+| `56949eb` | Document supply-chain security review (this file). |
+| (this commit) | Add gitleaks + OSV-Scanner workflows, defensive guards against issue #946 (`alwaysHiddenControlItemBounds` nil on inversion, `enforceControlItemOrder` uses live bounds), and document the additions in `SECURITY-REVIEW.md`. |
