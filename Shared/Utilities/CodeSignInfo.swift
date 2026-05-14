@@ -2,6 +2,10 @@
 //  CodeSignInfo.swift
 //  Shared
 //
+//  Inspects the current process's code signature so the rest of the app
+//  can decide whether to apply XPC peer requirements that depend on a
+//  real Apple team identifier.
+//
 
 import Foundation
 import Security
