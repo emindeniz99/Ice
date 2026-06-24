@@ -257,15 +257,21 @@ extension MenuBarItemManager {
         /// the control items have settled into their correct positions,
         /// the always-hidden section starts working again.
         var alwaysHiddenControlItemBounds: CGRect? {
-            guard let ah = rawAlwaysHiddenControlItemBounds else {
-                return nil
+            // `mutating get` because reading the `lazy var` backing
+            // properties (rawAlwaysHiddenControlItemBounds, hiddenControlItemBounds)
+            // mutates `self`. The only caller, `findSection`, is already
+            // `mutating`, so this is transparent.
+            mutating get {
+                guard let ah = rawAlwaysHiddenControlItemBounds else {
+                    return nil
+                }
+                // Always-hidden must be strictly to the LEFT of hidden. If the
+                // two collide or invert, treat the section as missing.
+                guard ah.maxX <= hiddenControlItemBounds.minX else {
+                    return nil
+                }
+                return ah
             }
-            // Always-hidden must be strictly to the LEFT of hidden. If the
-            // two collide or invert, treat the section as missing.
-            guard ah.maxX <= hiddenControlItemBounds.minX else {
-                return nil
-            }
-            return ah
         }
 
         init(controlItems: ControlItemPair, displayID: CGDirectDisplayID?) {
