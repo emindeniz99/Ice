@@ -1,3 +1,7 @@
+# Hardened per Astral's open-source security guide
+# (https://astral.sh/blog/open-source-security-at-astral):
+# pinned-to-SHA third-party actions, default-deny permissions,
+# strict bash defaults, no pull_request_target / workflow_run.
 name: Lint Swift Files
 on:
   push:
@@ -11,13 +15,22 @@ on:
       - ".github/workflows/lint.yml"
       - ".swiftlint.yml"
       - "**/*.swift"
+
+permissions: {}
+
+defaults:
+  run:
+    shell: "bash -euo pipefail {0}"
+
 jobs:
   swiftlint:
     if: '!github.event.pull_request.merged'
     runs-on: ubuntu-latest
+    permissions:
+      checks: write
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - name: Run SwiftLint
-        uses: norio-nomura/action-swiftlint@3.2.1
+        uses: norio-nomura/action-swiftlint@9f4dcd7fd46b4e75d7935cf2f4df406d5cae3684  # 3.2.1
         with:
           args: --strict

@@ -66,16 +66,29 @@ struct MenuBarLayoutSettingsPane: View {
 
     @ViewBuilder
     private var missingScreenRecordingPermissions: some View {
-        VStack {
+        VStack(spacing: 8) {
             Text("Menu bar layout requires screen recording permissions.")
                 .font(.title2)
 
-            Button {
-                appState.navigationState.settingsNavigationIdentifier = .advanced
-            } label: {
-                Text("Go to Advanced Settings")
+            if #available(macOS 26.0, *) {
+                Text("On macOS 26, Ice may need to relaunch after you grant this permission.")
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.link)
+
+            HStack {
+                Button {
+                    appState.navigationState.settingsNavigationIdentifier = .advanced
+                } label: {
+                    Text("Go to Advanced Settings")
+                }
+                .buttonStyle(.link)
+
+                if #available(macOS 26.0, *) {
+                    Button("Relaunch Ice") {
+                        appState.relaunch()
+                    }
+                }
+            }
         }
     }
 

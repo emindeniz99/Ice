@@ -1,0 +1,171 @@
+# Hardened per Astral's open-source security guide
+# (https://astral.sh/blog/open-source-security-at-astral):
+# pinned-to-SHA third-party actions, default-deny permissions,
+# strict bash defaults, no pull_request_target / workflow_run.
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "**/*.swift"
+      - "**/*.xcconfig"
+      - "**/*.entitlements"
+      - "**/*.xcodeproj/**"
+      - "**/Resources/**"
+      - "Package.resolved"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "**/*.swift"
+      - "**/*.xcconfig"
+      - "**/*.entitlements"
+      - "**/*.xcodeproj/**"
+      - "**/Resources/**"
+      - "Package.resolved"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+defaults:
+  run:
+    shell: "bash -euo pipefail {0}"
+
+jobs:
+  # Linux-side smoke test. Cheap, runs on free runners, catches raw
+  # syntax errors before we burn macOS-runner minutes on them.
+  swift-parse:
+    name: Swift parse (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Install Swift 6.0.3
+        run: |
+          set -e
+          mkdir -p $HOME/swift
+          cd $HOME/swift
+          curl -sLO https://download.swift.org/swift-6.0.3-release/ubuntu2404/swift-6.0.3-RELEASE/swift-6.0.3-RELEASE-ubuntu24.04.tar.gz
+          tar xzf swift-6.0.3-RELEASE-ubuntu24.04.tar.gz
+          rm swift-6.0.3-RELEASE-ubuntu24.04.tar.gz
+          echo "$HOME/swift/swift-6.0.3-RELEASE-ubuntu24.04/usr/bin" >> $GITHUB_PATH
+
+      - name: Parse-check every Swift file
+        run: |
+          set -e
+          fails=0
+          while IFS= read -r f; do
+            output=$(swiftc -parse -enable-bare-slash-regex "$f" 2>&1) || {
+              fails=$((fails + 1))
+              echo "::error file=$f::$output"
+            }
+          done < <(find Ice MenuBarItemService Shared -name '*.swift')
+          if [ "$fails" -ne 0 ]; then
+            echo "$fails files failed parse-check"
+            exit 1
+          fi
+          echo "All Swift files parse cleanly."
+
+  build:
+    name: Build (${{ matrix.runner }})
+    needs: swift-parse
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both runners have Xcode 26 installed under various point-version
+        # suffixes (Xcode_26.0.app, Xcode_26.1.app, etc.) — we pick the
+        # highest one available at runtime. macos-15 with the default
+        # Xcode 16 cannot build this codebase: it calls
+        # XPCListener(service:requirement:incomingSessionHandler:), which
+        # only exists in the macOS 26 SDK headers, so even @available guards
+        # don't help.
+        runner: [macos-26, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Select highest installed Xcode 26
+        run: |
+          set -e
+          XCODE_APP=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode 26.x found on this runner"
+            ls /Applications | grep -i Xcode || true
+            exit 1
+          fi
+          echo "Selected: $XCODE_APP"
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+
+      - name: Show toolchain
+        run: |
+          ls /Applications | grep -i Xcode || true
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+
+      - name: Resolve Swift package dependencies
+        run: |
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project Ice.xcodeproj \
+            -scheme Ice
+
+      - name: Build Ice (Debug, no signing)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Ice.xcodeproj \
+            -scheme Ice \
+            -configuration Debug \
+            -destination 'generic/platform=macOS' \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            ONLY_ACTIVE_ARCH=NO \
+            2>&1 | tee xcodebuild-ice.log
+
+      - name: Build MenuBarItemService (Debug, no signing)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Ice.xcodeproj \
+            -scheme MenuBarItemService \
+            -configuration Debug \
+            -destination 'generic/platform=macOS' \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            ONLY_ACTIVE_ARCH=NO \
+            2>&1 | tee xcodebuild-mbis.log
+
+      - name: Surface compiler errors
+        if: always()
+        run: |
+          # Pull error-only lines out of the full xcodebuild output so the
+          # GitHub UI surfaces them as failures even when the log is huge.
+          grep -E ': (error|warning): ' xcodebuild-ice.log xcodebuild-mbis.log || true
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: build-logs-${{ matrix.runner }}
+          path: |
+            xcodebuild-ice.log
+            xcodebuild-mbis.log
+          if-no-files-found: warn
+          retention-days: 7

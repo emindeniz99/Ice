@@ -153,14 +153,21 @@ struct AdvancedSettingsPane: View {
                             .foregroundStyle(.green)
                     }
                 } else {
-                    Button("Grant Permission") {
-                        permission.performRequest()
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Button("Grant Permission") {
+                            permission.performRequest()
+                        }
+                        if permission.mayRequireRelaunch {
+                            Button("Relaunch Ice") {
+                                appState.relaunch()
+                            }
+                        }
                     }
                 }
             } label: {
                 Text(permission.title)
             }
-            .frame(height: 22)
+            .frame(minHeight: 22)
         }
     }
 }

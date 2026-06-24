@@ -1,0 +1,58 @@
+# Hardened per Astral's open-source security guide
+# (https://astral.sh/blog/open-source-security-at-astral):
+# pinned-to-SHA third-party actions, default-deny permissions,
+# strict bash defaults, no pull_request_target / workflow_run.
+
+# OSV-Scanner (https://github.com/google/osv-scanner) checks the
+# project's lockfiles against the OSV vulnerability database. It
+# complements Dependabot's notifications by reporting at PR time
+# instead of in a separate PR feed.
+#
+# Note on structure: osv-scanner-action ships a reusable workflow,
+# so the job below uses `uses:` at the JOB level (not as a step).
+# Reusable-workflow jobs cannot declare `runs-on`/`steps`; the
+# runner and steps live inside the called workflow. `permissions`
+# on the caller still apply.
+
+name: OSV-Scanner
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "**/Package.resolved"
+      - ".github/workflows/**"
+      - ".github/workflows/osv-scanner.yml"
+  pull_request:
+    paths:
+      - "**/Package.resolved"
+      - ".github/workflows/**"
+      - ".github/workflows/osv-scanner.yml"
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: "bash -euo pipefail {0}"
+
+jobs:
+  scan:
+    # Reusable workflow from google/osv-scanner-action. Pinned to a
+    # 40-char SHA per the Astral hardening guidance; the trailing
+    # comment records the human-readable release tag.
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2  # v2.3.8
+    permissions:
+      contents: read
+      security-events: write   # so SARIF lands in code scanning
+      actions: read            # required by the reusable workflow
+    with:
+      # Recursive scan from the repo root picks up Package.resolved
+      # for Swift Package Manager wherever it sits in the tree.
+      # The reusable workflow appends `--format=sarif --output=...`
+      # itself, so don't pass those here.
+      scan-args: |-
+        --recursive
+        ./

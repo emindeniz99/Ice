@@ -57,7 +57,11 @@ final class AppState: ObservableObject {
 
     /// Async setup actions, run once on first access.
     private lazy var setupTask = Task {
-        permissions.stopAllChecks()
+        // Historically we stopped permission checks after setup to save a
+        // timer. On macOS 26 the user may revoke or grant Screen Recording
+        // while Ice is running (System Settings prompts a relaunch but
+        // doesn't force it), and if the timers are stopped we'll never
+        // notice that the permission state has changed. Keep them running.
 
         settings.performSetup(with: self)
         menuBarManager.performSetup(with: self)
@@ -204,6 +208,28 @@ final class AppState: ObservableObject {
             permissions.accessibility.hasPermission
         case .screenRecording:
             permissions.screenRecording.hasPermission
+        }
+    }
+
+    /// Relaunches the app from its current bundle location.
+    ///
+    /// On macOS 26, Screen Recording permissions sometimes require a full
+    /// restart of Ice before the capture APIs start returning useful
+    /// results even after the user has granted the permission in System
+    /// Settings. This launches a fresh copy of the app and then
+    /// terminates the current process.
+    func relaunch() {
+        let bundleURL = Bundle.main.bundleURL
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { _, error in
+            if let error {
+                Logger.default.error("Failed to relaunch app - \(error.localizedDescription)")
+                return
+            }
+            DispatchQueue.main.async {
+                NSApp.terminate(nil)
+            }
         }
     }
 

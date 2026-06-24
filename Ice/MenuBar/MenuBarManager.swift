@@ -180,9 +180,16 @@ final class MenuBarManager: ObservableObject {
                         return
                     }
 
-                    Task {
-                        // Get all items.
-                        var items = await MenuBarItem.getMenuBarItems(on: screen.displayID, option: .activeSpace)
+                    Task { [appState] in
+                        // Get items for this display. Route through the item
+                        // manager so the frame-based control-item map is
+                        // built first (needed to tag Ice's own items
+                        // correctly on macOS 26, where Control Center
+                        // re-parents their windows).
+                        var items = await appState.itemManager.menuBarItems(
+                            on: screen.displayID,
+                            option: .activeSpace
+                        )
 
                         // Filter the items down according to the currently enabled/shown sections.
                         if
@@ -262,13 +269,10 @@ final class MenuBarManager: ObservableObject {
     /// Returns a Boolean value that indicates whether the given display
     /// has a valid menu bar.
     func hasValidMenuBar(in windows: [WindowInfo], for display: CGDirectDisplayID) -> Bool {
-        guard
-            let window = WindowInfo.menuBarWindow(from: windows, for: display),
-            let element = AXHelpers.element(at: window.bounds.origin)
-        else {
+        guard let window = WindowInfo.menuBarWindow(from: windows, for: display) else {
             return false
         }
-        return AXHelpers.role(for: element) == .menuBar
+        return AXHelpers.menuBarElement(nearDisplayOrigin: window.bounds.origin) != nil
     }
 
     /// Shows the secondary context menu.
@@ -302,7 +306,12 @@ final class MenuBarManager: ObservableObject {
             return
         }
         logger.info("Hiding application menus")
-        appState.activate(withPolicy: .regular)
+        // Previously we flipped the activation policy to `.regular` to steal
+        // the menu bar from the frontmost app, but on macOS 26 that policy
+        // change is materialized as a dock icon for every bar expansion
+        // (see #906). `.accessory` apps can already be activated and take
+        // over the menu bar, so we just activate without changing policy.
+        appState.activate()
         isHidingApplicationMenus = true
     }
 
@@ -313,7 +322,8 @@ final class MenuBarManager: ObservableObject {
             return
         }
         logger.info("Showing application menus")
-        appState.deactivate(withPolicy: .accessory)
+        // Match the policy-free activation in `hideApplicationMenus()`.
+        appState.deactivate()
         isHidingApplicationMenus = false
     }
 

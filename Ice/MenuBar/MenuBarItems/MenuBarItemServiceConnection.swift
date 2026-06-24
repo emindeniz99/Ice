@@ -104,7 +104,14 @@ extension MenuBarItemService {
                     logger.warning("Session was cancelled with error \(error.localizedDescription)")
                     self.session = nil
                 }
-                session.setPeerRequirement(.isFromSameTeam())
+                // `.isFromSameTeam()` requires a real team identifier on both
+                // sides of the connection. Ad-hoc signed builds have none, so
+                // activating with that requirement would make the session
+                // unusable. Only apply the requirement when we actually have
+                // a team identifier.
+                if CodeSignInfo.hasTeamIdentifier {
+                    session.setPeerRequirement(.isFromSameTeam())
+                }
                 session.setTargetQueue(queue)
                 try session.activate()
                 self.session = session

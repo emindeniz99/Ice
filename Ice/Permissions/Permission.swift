@@ -24,8 +24,13 @@ class Permission: ObservableObject, Identifiable {
     /// A Boolean value that indicates if the app can work without this permission.
     let isRequired: Bool
 
-    /// The URL of the settings pane to open.
-    private let settingsURL: URL?
+    /// A Boolean value that indicates whether the app may need to relaunch
+    /// before this permission becomes usable. On macOS 26 Screen Recording
+    /// sometimes only takes effect after a relaunch.
+    let mayRequireRelaunch: Bool
+
+    /// The URLs of the settings panes to try to open, in order of preference.
+    private let settingsURLs: [URL]
 
     /// The function that checks permissions.
     private let check: () -> Bool
@@ -40,26 +45,20 @@ class Permission: ObservableObject, Identifiable {
     private var hasPermissionCancellable: AnyCancellable?
 
     /// Creates a permission.
-    ///
-    /// - Parameters:
-    ///   - title: The title of the permission.
-    ///   - details: Descriptive details for the permission.
-    ///   - isRequired: A Boolean value that indicates if the app can work without this permission.
-    ///   - settingsURL: The URL of the settings pane to open.
-    ///   - check: A function that checks permissions.
-    ///   - request: A function that requests permissions.
     init(
         title: String,
         details: [String],
         isRequired: Bool,
-        settingsURL: URL?,
+        mayRequireRelaunch: Bool = false,
+        settingsURLs: [URL] = [],
         check: @escaping () -> Bool,
         request: @escaping () -> Void
     ) {
         self.title = title
         self.details = details
         self.isRequired = isRequired
-        self.settingsURL = settingsURL
+        self.mayRequireRelaunch = mayRequireRelaunch
+        self.settingsURLs = settingsURLs
         self.check = check
         self.request = request
         self.hasPermission = check()
@@ -82,8 +81,46 @@ class Permission: ObservableObject, Identifiable {
     /// Performs the request and opens the System Settings app to the appropriate pane.
     func performRequest() {
         request()
-        if let settingsURL {
-            NSWorkspace.shared.open(settingsURL)
+        openSettingsPane()
+    }
+
+    /// Opens the most relevant System Settings pane for the permission.
+    ///
+    /// On macOS 26 the URL scheme for Privacy panes has shifted from the
+    /// legacy `com.apple.preference.security` bundle to
+    /// `com.apple.settings.PrivacySecurity.extension`. Some point releases
+    /// accept both; others only the new form. We try the new URLs first,
+    /// then the legacy one, and finally shell out to `/usr/bin/open` to
+    /// bypass any NSWorkspace registration glitches.
+    func openSettingsPane() {
+        guard !settingsURLs.isEmpty else {
+            return
+        }
+
+        // Give the Settings app a chance to launch before we ask it to
+        // open a specific pane — on macOS 26 the pane URL is sometimes
+        // ignored if Settings wasn't already running.
+        if #available(macOS 13, *) {
+            let settingsAppURL = URL(fileURLWithPath: "/System/Applications/System Settings.app")
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.openApplication(at: settingsAppURL, configuration: configuration)
+        }
+
+        for url in settingsURLs where NSWorkspace.shared.open(url) {
+            return
+        }
+
+        for url in settingsURLs {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = [url.absoluteString]
+            do {
+                try process.run()
+                return
+            } catch {
+                continue
+            }
         }
     }
 
@@ -127,7 +164,6 @@ final class AccessibilityPermission: Permission {
                 "Arrange menu bar items.",
             ],
             isRequired: true,
-            settingsURL: nil,
             check: {
                 AXHelpers.isProcessTrusted()
             },
@@ -149,7 +185,15 @@ final class ScreenRecordingPermission: Permission {
                 "Display images of individual menu bar items.",
             ],
             isRequired: false,
-            settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"),
+            mayRequireRelaunch: true,
+            settingsURLs: [
+                // Preferred macOS 26+ URL (new Privacy extension bundle).
+                "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture",
+                // Same extension, fall back to the Privacy landing page.
+                "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy",
+                // Legacy URL kept for earlier macOS and as a last resort.
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            ].compactMap { URL(string: $0) },
             check: {
                 ScreenCapture.checkPermissions()
             },

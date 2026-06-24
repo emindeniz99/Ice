@@ -34,11 +34,16 @@ enum ScreenCapture {
     /// This function caches its initial result and returns it on subsequent
     /// calls. Pass `true` to the `reset` parameter to replace the cached
     /// result with a newly computed value.
+    ///
+    /// Only **positive** results are cached. If the app initially has no
+    /// permission (the common case on first launch and after users change
+    /// privacy settings in macOS 26), subsequent calls re-check so that the
+    /// new grant is picked up without requiring a reset.
     static func cachedCheckPermissions(reset: Bool = false) -> Bool {
         enum Context {
             static var cachedResult: Bool?
         }
-        if !reset, let result = Context.cachedResult {
+        if !reset, let result = Context.cachedResult, result {
             return result
         }
         let result = checkPermissions()

@@ -78,7 +78,8 @@ final class LayoutBarPaddingView: NSView {
                 Task {
                     // dragging source is the only view in the layout bar, so we
                     // need to find a target item
-                    let items = await MenuBarItem.getMenuBarItems(option: .activeSpace)
+                    let items = await container.appState?.itemManager
+                        .menuBarItems(option: .activeSpace) ?? []
                     let targetItem: MenuBarItem? = switch container.section {
                     case .visible: nil // visible section always has more than 1 item
                     case .hidden: items.first(matching: .hiddenControlItem)

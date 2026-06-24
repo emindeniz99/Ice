@@ -73,7 +73,13 @@ final class Listener {
         Logger.default.debug("Activating listener")
 
         do {
-            if #available(macOS 26.0, *) {
+            // `.isFromSameTeam()` only succeeds when the process has a real
+            // team identifier in its signature. Ad-hoc signed builds (which
+            // Xcode produces by default when there's no signing team set)
+            // have no team ID, so the requirement would refuse every peer
+            // and the XPC channel would be unusable. Fall back to the
+            // unchecked activation in that case so local builds still work.
+            if #available(macOS 26.0, *), CodeSignInfo.hasTeamIdentifier {
                 try uncheckedActivateWithSameTeamRequirement()
             } else {
                 try uncheckedActivate()

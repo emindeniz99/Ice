@@ -121,6 +121,11 @@ struct SettingsView: View {
         if #available(macOS 26.0, *) {
             settingsPane
                 .scrollEdgeEffectStyle(.hard, for: .top)
+                // SwiftUI NavigationSplitView sometimes fails to update the
+                // detail pane on the first sidebar click under macOS 26.
+                // Keying the pane by the current navigation identifier forces
+                // a re-render whenever the selection changes.
+                .id(navigationState.settingsNavigationIdentifier)
         } else {
             settingsPane
         }

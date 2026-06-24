@@ -235,7 +235,44 @@ extension MenuBarItemManager {
         var shouldClearCachedItemWindowIDs = false
 
         private(set) lazy var hiddenControlItemBounds = bestBounds(for: controlItems.hidden)
-        private(set) lazy var alwaysHiddenControlItemBounds = controlItems.alwaysHidden.map(bestBounds)
+
+        /// Cached bounds for the always-hidden control item, before the
+        /// sanity check below. Only used by ``alwaysHiddenControlItemBounds``.
+        private(set) lazy var rawAlwaysHiddenControlItemBounds = controlItems.alwaysHidden.map(bestBounds)
+
+        /// Returns the bounds of the always-hidden control item, or `nil`
+        /// if the section is disabled OR the bounds collide with / are to
+        /// the right of the hidden control item.
+        ///
+        /// On macOS 26.5, Control Center's status-item reparenting can
+        /// (transiently) report both control items at the same X position,
+        /// or even with the always-hidden control item to the *right* of
+        /// the hidden one. With the predicates below, that makes the
+        /// `.hidden` branch unsatisfiable and every previously-hidden item
+        /// falls through to `.alwaysHidden` — exactly the symptom in
+        /// jordanbaird/Ice#946. Returning `nil` here transparently routes
+        /// `findSection` through its no-always-hidden code path, which
+        /// classifies everything to the left of `hiddenControlItemBounds`
+        /// as `.hidden`. The next cache tick re-derives bounds and, when
+        /// the control items have settled into their correct positions,
+        /// the always-hidden section starts working again.
+        var alwaysHiddenControlItemBounds: CGRect? {
+            // `mutating get` because reading the `lazy var` backing
+            // properties (rawAlwaysHiddenControlItemBounds, hiddenControlItemBounds)
+            // mutates `self`. The only caller, `findSection`, is already
+            // `mutating`, so this is transparent.
+            mutating get {
+                guard let ah = rawAlwaysHiddenControlItemBounds else {
+                    return nil
+                }
+                // Always-hidden must be strictly to the LEFT of hidden. If the
+                // two collide or invert, treat the section as missing.
+                guard ah.maxX <= hiddenControlItemBounds.minX else {
+                    return nil
+                }
+                return ah
+            }
+        }
 
         init(controlItems: ControlItemPair, displayID: CGDirectDisplayID?) {
             self.controlItems = controlItems
@@ -294,8 +331,14 @@ extension MenuBarItemManager {
 
         for item in items where context.isValidForCaching(item) {
             if item.sourcePID == nil {
+                // On macOS 26, some items genuinely cannot be resolved via AX
+                // (processes that don't expose `AXExtrasMenuBar`). Previously we
+                // invalidated the cached window IDs whenever sourcePID was nil,
+                // which kicked off another full re-cache on the very next tick,
+                // thrashing the AX scans and racing with IceBar show operations.
+                // The SourcePID cache now handles TTL-based negative lookups, so
+                // we log and continue.
                 logger.warning("Missing sourcePID for \(item.logString, privacy: .public)")
-                context.shouldClearCachedItemWindowIDs = true
             }
 
             if let temp = temporarilyShownItemContexts.first(where: { $0.tag == item.tag }) {
@@ -351,21 +394,94 @@ extension MenuBarItemManager {
             }
 
             let displayID = Bridging.getActiveMenuBarDisplayID()
-            var items = await MenuBarItem.getMenuBarItems(option: .activeSpace)
+
+            // Pre-fetch the window list so we can build a controlItemMap
+            // before turning the raw windows into MenuBarItems. This is the
+            // macOS 26 workaround for Control Center re-parenting Ice's own
+            // status items: after a reparent, the windows carry Control
+            // Center as their owner and — on some Tahoe point releases —
+            // have `title == nil`. Match them by frame against the live
+            // NSStatusItem windows so we can put the correct
+            // `Ice.ControlItem.*` identifier back on them.
+            let menuBarItemWindows = MenuBarItem.getMenuBarItemWindows(option: .activeSpace)
+            let controlItemMap = buildControlItemMap(for: menuBarItemWindows)
+            var items = await MenuBarItem.getMenuBarItems(
+                windows: menuBarItemWindows,
+                controlItemMap: controlItemMap
+            )
 
             let itemWindowIDs = currentItemWindowIDs ?? items.reversed().map { $0.windowID }
             await cacheActor.updateCachedItemWindowIDs(itemWindowIDs)
 
             guard let controlItems = ControlItemPair(items: &items) else {
-                // ???: Is clearing the cache the best thing to do here?
-                logger.warning("Missing control item for hidden section, clearing menu bar item cache")
-                itemCache = ItemCache(displayID: nil)
+                // Historically we replaced the cache with an empty one whenever
+                // this happened, but on macOS 26 the hidden control item can
+                // temporarily disappear from the window list during Control
+                // Center re-parenting. Clearing the cache to empty kicked off
+                // an immediate re-cache via observers, which on a bad day
+                // devolved into the FrontBoard scene-request storm described
+                // in issue #908. Keep the previous cache instead, log, and let
+                // the next scheduled tick try again.
+                logger.warning("Missing control item for hidden section, keeping previous cache")
                 return
             }
 
             await enforceControlItemOrder(controlItems: controlItems)
             await uncheckedCacheItems(items: items, controlItems: controlItems, displayID: displayID)
         }
+    }
+
+    /// Builds a map from menu-bar-item windowIDs to Ice's control-item
+    /// identifier, matching by frame. On macOS 26 this is how we recover
+    /// Ice's own control items after Control Center has re-parented them
+    /// and stripped their titles.
+    private func buildControlItemMap(for windows: [WindowInfo]) -> [CGWindowID: ControlItem.Identifier] {
+        guard
+            #available(macOS 26.0, *),
+            let appState
+        else {
+            return [:]
+        }
+        // Snapshot each ControlItem's current frame, converting from
+        // Cocoa (bottom-left) to CG screen coordinates (top-left).
+        var controlBounds = [(CGRect, ControlItem.Identifier)]()
+        for section in appState.menuBarManager.sections {
+            let controlItem = section.controlItem
+            guard
+                let frame = controlItem.window?.frame,
+                let screen = controlItem.screen
+            else {
+                continue
+            }
+            let cgRect = CGRect(
+                x: frame.origin.x,
+                y: screen.frame.height - frame.origin.y - frame.height,
+                width: frame.width,
+                height: frame.height
+            )
+            controlBounds.append((cgRect, controlItem.identifier))
+        }
+        var map = [CGWindowID: ControlItem.Identifier]()
+        for window in windows {
+            for (bounds, identifier) in controlBounds where window.bounds == bounds {
+                map[window.windowID] = identifier
+                break
+            }
+        }
+        return map
+    }
+
+    /// Returns the current menu bar items, building the frame-based
+    /// control-item map first so Ice's own items get the correct
+    /// `.ice` namespace even when Control Center has re-parented them
+    /// on macOS 26.
+    func menuBarItems(
+        on display: CGDirectDisplayID? = nil,
+        option: MenuBarItem.ListOption
+    ) async -> [MenuBarItem] {
+        let windows = MenuBarItem.getMenuBarItemWindows(on: display, option: option)
+        let map = buildControlItemMap(for: windows)
+        return await MenuBarItem.getMenuBarItems(windows: windows, controlItemMap: map)
     }
 
     /// Caches the current menu bar items, if the items have changed
@@ -876,7 +992,12 @@ extension MenuBarItemManager {
     private func updateMoveOperationTimeout(_ timeout: Duration, for item: MenuBarItem) {
         let current = getMoveOperationTimeout(for: item)
         let average = (timeout + current) / 2
-        let clamped = average.clamped(min: .milliseconds(25), max: .milliseconds(150))
+        // Upper bound increased from 150ms to 500ms. On macOS 26, third-party
+        // helpers like Intego One occasionally need several hundred ms to
+        // update their menu bar window bounds after a mouse-down is posted;
+        // the old cap caused spurious "Frame check timed out" errors and left
+        // their icons stranded after a drag (see #918).
+        let clamped = average.clamped(min: .milliseconds(25), max: .milliseconds(500))
         moveOperationTimeouts[item.tag] = clamped
     }
 
@@ -1375,7 +1496,7 @@ extension MenuBarItemManager {
             return
         }
 
-        var items = await MenuBarItem.getMenuBarItems(option: .activeSpace)
+        var items = await menuBarItems(option: .activeSpace)
 
         guard let destination = getReturnDestination(for: item, in: items) else {
             logger.error("No return destination for \(item.logString, privacy: .public)")
@@ -1477,7 +1598,7 @@ extension MenuBarItemManager {
         var currentContexts = temporarilyShownItemContexts
         temporarilyShownItemContexts.removeAll()
 
-        let items = await MenuBarItem.getMenuBarItems(option: .activeSpace)
+        let items = await menuBarItems(option: .activeSpace)
         var failedContexts = [TemporarilyShownItemContext]()
 
         appState.hidEventManager.stopAll()
@@ -1558,10 +1679,20 @@ extension MenuBarItemManager {
     private func enforceControlItemOrder(controlItems: ControlItemPair) async {
         let hidden = controlItems.hidden
 
-        guard
-            let alwaysHidden = controlItems.alwaysHidden,
-            hidden.bounds.maxX <= alwaysHidden.bounds.minX
-        else {
+        // Use the live `getWindowBounds` rather than `item.bounds` so the
+        // comparison reflects what `findSection` will see. During Control
+        // Center reparenting on macOS 26 the CGWindowList snapshot can
+        // disagree with `CGSGetScreenRectForWindow` for a few hundred
+        // milliseconds; without the live read, this routine sometimes
+        // "corrected" an order that was already right.
+        let hiddenBounds = Bridging.getWindowBounds(for: hidden.windowID) ?? hidden.bounds
+
+        guard let alwaysHidden = controlItems.alwaysHidden else {
+            return
+        }
+        let alwaysHiddenBounds = Bridging.getWindowBounds(for: alwaysHidden.windowID) ?? alwaysHidden.bounds
+
+        guard hiddenBounds.maxX <= alwaysHiddenBounds.minX else {
             return
         }
 

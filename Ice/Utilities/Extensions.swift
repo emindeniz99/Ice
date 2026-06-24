@@ -452,8 +452,14 @@ extension NSBezierPath {
         shadow.shadowBlurRadius = radius
         shadow.shadowColor = color
 
-        // swiftlint:disable:next force_cast
-        let path = copy() as! NSBezierPath
+        // Defensive: NSBezierPath.copy() returns an NSBezierPath in
+        // practice, but `as!` on the result has been associated with
+        // EXC_BREAKPOINT crashes on macOS 26.5 main-thread paths
+        // (see jordanbaird/Ice#956). Guard the cast so a runtime mismatch
+        // falls through to a no-op draw instead of trapping the process.
+        guard let path = copy() as? NSBezierPath else {
+            return
+        }
 
         context.saveGraphicsState()
 
@@ -553,10 +559,7 @@ extension NSScreen {
     func getApplicationMenuFrame() -> CGRect? {
         let displayBounds = CGDisplayBounds(displayID)
 
-        guard
-            let menuBar = AXHelpers.element(at: displayBounds.origin),
-            AXHelpers.role(for: menuBar) == .menuBar
-        else {
+        guard let menuBar = AXHelpers.menuBarElement(nearDisplayOrigin: displayBounds.origin) else {
             return nil
         }
 

@@ -107,7 +107,15 @@ extension UpdatesManager: @preconcurrency SPUStandardUserDriverDelegate {
         if NSApp.isActive {
             return immediateFocus
         } else {
-            return false
+            // Previously we returned `false` here, hoping Sparkle would defer
+            // the prompt — but the standard user driver then schedules the
+            // dialog anyway with Ice still in the background (.accessory). On
+            // macOS 26 that dialog refuses to accept clicks because the app
+            // never became key, which is the symptom users have been hitting
+            // in #912 / #926 / #931 / #932 / #937. Activate Ice with a
+            // regular policy and tell Sparkle we want it shown.
+            appState?.activate(withPolicy: .regular)
+            return true
         }
     }
 
@@ -119,7 +127,11 @@ extension UpdatesManager: @preconcurrency SPUStandardUserDriverDelegate {
         guard let appState else {
             return
         }
-        if !state.userInitiated {
+        if handleShowingUpdate {
+            // Sparkle is about to put up a real window. Make sure the app is
+            // active so the window becomes key and accepts input on macOS 26.
+            appState.activate(withPolicy: .regular)
+        } else if !state.userInitiated {
             appState.userNotificationManager.addRequest(
                 with: .updateCheck,
                 title: "A new update is available",
